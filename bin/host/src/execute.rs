@@ -8,10 +8,11 @@ use rsp_client_executor::executor::{
 };
 use rsp_host_executor::ExecutionHooks;
 use sp1_core_executor::SyscallCode;
-use sp1_sdk::ExecutionReport;
+use sp1_sdk::{ExecutionReport, SP1VerifyingKey};
 use std::{
     fs::{File, OpenOptions},
     path::PathBuf,
+    time::Duration,
 };
 use strum::IntoEnumIterator;
 
@@ -189,6 +190,48 @@ impl ExecutionHooks for PersistExecutionReport {
         self.write_record::<P>(&mut writer, executed_block, execution_report)?;
 
         writer.flush()?;
+
+        Ok(())
+    }
+
+    async fn on_proving_end(
+        &self,
+        block_number: u64,
+        proof_bytes: &[u8],
+        _vk: &SP1VerifyingKey,
+        cycle_count: Option<u64>,
+        proving_duration: Duration,
+    ) -> eyre::Result<()> {
+        let proving_path = self.report_path.with_file_name("proving_report.csv");
+        let file = OpenOptions::new().append(true).create(true).open(&proving_path)?;
+        let file_is_empty = file.metadata()?.len() == 0;
+        let mut writer = WriterBuilder::new().from_writer(file);
+
+        if file_is_empty {
+            writer.write_record(&[
+                "block_number",
+                "proving_time_s",
+                "total_cycles",
+                "proof_size_bytes",
+            ])?;
+        }
+
+        writer.write_record(&[
+            block_number.to_string(),
+            format!("{:.6}", proving_duration.as_secs_f64()),
+            cycle_count.unwrap_or(0).to_string(),
+            proof_bytes.len().to_string(),
+        ])?;
+
+        writer.flush()?;
+
+        println!(
+            "\nProving report: block={}, time={:.2}s, cycles={}, proof_size={}B",
+            block_number,
+            proving_duration.as_secs_f64(),
+            cycle_count.unwrap_or(0),
+            proof_bytes.len()
+        );
 
         Ok(())
     }
