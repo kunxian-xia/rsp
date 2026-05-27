@@ -3,11 +3,38 @@ use std::{fs, path::PathBuf};
 use alloy_chains::Chain;
 use alloy_primitives::Address;
 use alloy_provider::{network::AnyNetwork, Provider, RootProvider};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use rsp_host_executor::Config;
 use rsp_primitives::genesis::Genesis;
 use sp1_sdk::SP1ProofMode;
 use url::Url;
+
+/// The proof mode selectable from the CLI.
+///
+/// Mirrors `sp1_sdk::SP1ProofMode` so that we can derive `clap::ValueEnum` on it
+/// without touching upstream SP1.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ProveMode {
+    /// Raw RISC-V STARK shard proofs (size scales with cycles, no recursion).
+    Core,
+    /// Recursively compressed STARK proof (constant size). Default.
+    Compressed,
+    /// Plonk BN254 SNARK wrapping the compressed proof (for on-chain verification).
+    Plonk,
+    /// Groth16 BN254 SNARK wrapping the compressed proof (for on-chain verification).
+    Groth16,
+}
+
+impl From<ProveMode> for SP1ProofMode {
+    fn from(mode: ProveMode) -> Self {
+        match mode {
+            ProveMode::Core => SP1ProofMode::Core,
+            ProveMode::Compressed => SP1ProofMode::Compressed,
+            ProveMode::Plonk => SP1ProofMode::Plonk,
+            ProveMode::Groth16 => SP1ProofMode::Groth16,
+        }
+    }
+}
 
 /// The arguments for the host executable.
 #[derive(Debug, Clone, Parser)]
@@ -30,6 +57,12 @@ pub struct HostArgs {
     /// Whether to generate a proof or just execute the block.
     #[clap(long)]
     pub prove: bool,
+
+    /// The proof mode to use when `--prove` is set. Defaults to `compressed` to
+    /// preserve historical behavior. Use `core` to prove the RISC-V execution
+    /// only (no recursion / SNARK wrapping).
+    #[clap(long, value_enum, default_value_t = ProveMode::Compressed)]
+    pub prove_mode: ProveMode,
 
     /// Optional path to the directory containing cached client input. A new cache file will be
     /// created from RPC data if it doesn't already exist.
@@ -97,7 +130,7 @@ impl HostArgs {
             rpc_url,
             cache_dir: self.cache_dir.clone(),
             custom_beneficiary: self.custom_beneficiary,
-            prove_mode: self.prove.then_some(SP1ProofMode::Compressed),
+            prove_mode: self.prove.then_some(self.prove_mode.into()),
             skip_client_execution: false,
             opcode_tracking: self.opcode_tracking,
         };
